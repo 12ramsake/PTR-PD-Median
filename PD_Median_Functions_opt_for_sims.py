@@ -1,14 +1,6 @@
 import numpy as np
-import mtalg
-from mtalg.random import MultithreadedRNG
-import pickle
-from tqdm import tqdm
-import scipy
 import cupy as cp
-import seaborn as sns
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
 ## The different considered mu and sigma in the paper
 
@@ -190,18 +182,13 @@ def GD_update_PD(x,step,loc,scale,u,d):
     return x-step*grad_outlyingness(x,loc,scale,u,d)
 
 
-
+# non private pd median
 # IV: list of data projected onto the unit vectors (n x nvec), 
 #            mu computed at all unit vectors (nvec x 1) and sigma (nvec x 1) computed at all unit vectors
 # u: nvec x d matrix of unit vectors
-# n: number of samples
 # d: dimension
-# tau: tau value for PTR
-# eta: eta value for PTR
-# eps: DP param 1
-# step_l: step size for langevin dynamics
-# nstep: number of steps for the langevin dynamics
-# mrng: object from mtalg package for seed
+# step: step size 
+# nstep: number of steps 
 def non_private_pd(IV,u,d,step,nstep=1000,plot=False,x0=None,return_chain=False):
     ###### MCMC-lagevin dyanmics for private median
     if x0 is None:
@@ -303,6 +290,8 @@ def get_fv(y,tau,C1,C2,Delta_mu,eta,eps,delta,d):
         denom=C1*(tau-y-2*eta)-Delta_mu
         ratio=numer/denom
         to_expon=d*cp.log(ratio)-eps*y/(4*eta)
+        # print('Deltamu ',Delta_mu)
+        # print("final ", to_expon)
     else:
         print("warnings -1")
         final_value=-1
@@ -507,6 +496,8 @@ def find_SM_approx(IV,fn_dict,eta,tau,eps,delta,d,n,joint,curr_max=32):
 # delta: DP param 2
 # eps: DP param 1
 # d: dimension of data
+# n: sample size
+# joint is whether or not to compute jointly, its fater so usually you want this
 def test(IV,fn_dict,eta,tau,delta,eps,d,n,joint):
     details=find_SM_approx(IV,fn_dict,eta,tau,eps,delta,d,n,joint)
     sm=details[0]
@@ -590,7 +581,7 @@ def test(IV,fn_dict,eta,tau,delta,eps,d,n,joint):
 
 
 #Its the S and the b function for a single u , then we just apply these along axis to all u 
-#assumes x is sorted... 
+# assumes x is sorted... 
 def S_med_iqr_b_joint(x,k,n):
     k=int(k)
     a=int(cp.floor((n+1)/2))
@@ -605,7 +596,8 @@ def S_med_iqr_b_joint(x,k,n):
     S_iqr=cp.max(cp.array([larger_iqr-IQR,IQR-smaller_iqr]))
     return cp.array([S_med,S_iqr ,b_min])
 
-
+# computing things (Ss, and b hat) jointly so its faster
+# assumes x is sorted... 
 def S_med_mad_b_joint(x,k,n):
     k=int(k)
     a=int(cp.floor((n+1)/2))
@@ -630,8 +622,8 @@ def S_med_mad_b_joint(x,k,n):
 
 
 
-#Its the S and the b function for a single u , then we just apply these along axis to all u 
-#assumes x is sorted... 
+# Its the S and the b function for a single u , then we just apply these along axis to all u 
+# assumes x is sorted!!
 def S_hb_mad_b_joint(x,k,n,beta=2):
     k=int(k)
     a=int(cp.floor((n+1)/2))
@@ -662,6 +654,7 @@ def S_hb_mad_b_joint(x,k,n,beta=2):
     # print(type(b_min))
     return cp.array([S_hb,S_mad.get() ,b_min.get()])
 
+# computing g and local sens things jointly so its faster
 
 def joint_g_LS_z(z,x,k,n):
     y=cp.abs(x-z)
@@ -679,6 +672,7 @@ def joint_g_LS_z(z,x,k,n):
     
     
 ## add S and b hat for mad
+# order stat wrapper
 def order_stat(x,k):
     return cp.partition(x, k-1)[k-1]
 
@@ -692,7 +686,7 @@ def order_stat(x,k):
 #     g=order_stat(y, int((n+1)/2))
 #     return g
 
-
+# b hat for mad
 def b_hat_mad(x,k,n):
     q_prime=1/4-2*k/n-0.000001
     low=int(np.floor(q_prime*n))
@@ -721,7 +715,7 @@ def b_hat_mad(x,k,n):
 #     b_min=cp.min(y)
 #     return b_min
 
-
+## S for mad
 def S_mad(x,k,n):
     q_prime=1/4-2*k/n-0.000001
     low=int(np.floor(q_prime*n))
@@ -753,7 +747,7 @@ def S_mad(x,k,n):
     
     
 
-
+## S for median
 def S_med(x,k,n):
     q=int((n+1)/2)
     # q3 = cp.percentile(x, q/n+100*k/n)
@@ -786,7 +780,7 @@ def b_hat_iqr(x,k):
     IQR=iqr(x)
     smaller_iqr = (cp.percentile(x, q2/n-100*k/n)-cp.percentile(x, q1/n+100*k/n))
     return cp.min(cp.array([smaller_iqr,IQR]))
-
+## S for iqr
 def S_iqr(x,k):
     n=len(x)
     q1=100*cp.floor(n/4)
@@ -801,7 +795,7 @@ def S_iqr(x,k):
 
 
 
-## S for Huber paired with MAD
+## S for Huber location paired with MAD
 def S_Huber(x,k,beta=2.0):
     n=len(x)
     q=100*cp.floor((n+1)/2)
@@ -822,8 +816,14 @@ def S_Huber(x,k,beta=2.0):
 # eps: DP param 1
 # delta: DP param 2
 # nvec: num unit vectors N
-# mrng: object from mtalg package for seed
-# (IV,u,n,d,eps,eta,tau,step_l,nstep=1000,mrng=None,plot=False,x0=None,return_chain=False)
+# mrng: object from mtalg package for seed (not needed now)
+# step_l: step size
+# nstep: num steps in LD
+# u: nvec x d numpy array of uniformly sampled unit vectors
+# x0: starting val for chain
+# return_chain: return the MC?
+# IV: we may pass common IV to avoid repeat computation
+# joint: computing some parts of median and mad jointly to improve computation
 def compute_PTR_PD_Median(data,fn_dict,tau,eta,eps,delta,nvec=100,mrng=None,step_l=0.0000002,nstep=1000,u=None,x0=None,return_chain=False,IV=None,joint=True):
     n=data.shape[0]
     d=data.shape[1]
